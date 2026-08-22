@@ -40,3 +40,17 @@ Kunden, Prüfobjekte, Planung, Arbeitszeiten und Prüfprotokolle sind in dieser 
 npm install
 npm run dev
 ```
+
+## Kunden und Protokolle dauerhaft speichern
+
+1. In Supabase den **SQL Editor** öffnen.
+2. Den Inhalt von `supabase_setup_customers_protocols.sql` einfügen und **Run** ausführen.
+3. Danach die aktualisierte App über GitHub/Vercel deployen.
+4. Unter **Kunden** können Kunden angelegt und bearbeitet werden.
+5. Unter **Neue Prüfung** kann ein UVV-Protokoll erstellt werden. Es wird in Supabase gespeichert und unter **Protokolle** wieder geladen.
+
+Die RLS-Regeln erlauben den Zugriff nur für angemeldete Supabase-Benutzer (`authenticated`).
+
+
+## Dark-Design
+Die Oberfläche verwendet das Prüfwerk-Branding in Schwarz/Orange mit linker Navigation und eingebundenem Logo.
