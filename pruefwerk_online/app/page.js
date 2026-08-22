@@ -1,36 +1,91 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { supabase } from '../lib/supabase'
 
 const seedCustomers = [
   { id: 1, name: 'Muster GmbH', contact: 'Max Mustermann', city: 'Berlin' },
   { id: 2, name: 'Nordlogistik AG', contact: 'Anna Becker', city: 'Hamburg' }
 ]
-const seedEmployees = [
-  { id: 1, name: 'Marco Stein', role: 'Prüfer', status: 'Aktiv', weeklyHours: 40 },
-  { id: 2, name: 'Lena Koch', role: 'Prüferin', status: 'Aktiv', weeklyHours: 40 }
-]
 const seedAssets = [
   { id: 1, customerId: 1, name: 'Gabelstapler', internal: 'ST-001', location: 'Halle 1' },
   { id: 2, customerId: 2, name: 'Hubwagen', internal: 'HW-004', location: 'Lager Nord' }
-]
-const seedTimes = [
-  { id: 1, employeeId: 1, date: '2026-08-21', start: '07:30', end: '16:00', breakMinutes: 30, type: 'Arbeitszeit', customerId: 1, note: 'UVV-Prüfungen vor Ort' },
-  { id: 2, employeeId: 2, date: '2026-08-21', start: '08:00', end: '16:30', breakMinutes: 30, type: 'Arbeitszeit', customerId: 2, note: 'Prüfung und Dokumentation' }
 ]
 
 export default function Home() {
   const [tab, setTab] = useState('dashboard')
   const [customers, setCustomers] = useState(seedCustomers)
-  const [employees, setEmployees] = useState(seedEmployees)
+  const [employees, setEmployees] = useState([])
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [message, setMessage] = useState('')
   const [assets] = useState(seedAssets)
-  const [planning, setPlanning] = useState([
-    { id: 1, date: '2026-08-24', time: '08:00', employeeId: 1, customerId: 1, assetId: 1, status: 'Geplant' },
-    { id: 2, date: '2026-08-25', time: '10:30', employeeId: 2, customerId: 2, assetId: 2, status: 'Bestätigt' }
-  ])
+  const [planning, setPlanning] = useState([])
   const [protocols, setProtocols] = useState([])
-  const [timeEntries, setTimeEntries] = useState(seedTimes)
+  const [timeEntries, setTimeEntries] = useState([])
   const [timer, setTimer] = useState(null)
-  const [timeEmployee, setTimeEmployee] = useState(1)
+  const [timeEmployee, setTimeEmployee] = useState('')
+  const [editingEmployeeId, setEditingEmployeeId] = useState(null)
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false)
+      return
+    }
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      setAuthLoading(false)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+    })
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (session) loadEmployees()
+    else setEmployees([])
+  }, [session])
+
+  useEffect(() => {
+    if (employees.length && !timeEmployee) setTimeEmployee(String(employees.find(e => e.status !== 'Inaktiv')?.id || ''))
+  }, [employees, timeEmployee])
+
+  async function loadEmployees(){
+    if (!supabase) return
+    setDataLoading(true)
+    setMessage('')
+    const { data, error } = await supabase
+      .from('employees')
+      .select('id, created_at, name, role, weekly_hours, status')
+      .order('name', { ascending: true })
+    if (error) setMessage(`Mitarbeiter konnten nicht geladen werden: ${error.message}`)
+    else setEmployees((data || []).map(row => ({
+      id: row.id,
+      name: row.name || '',
+      role: row.role || '',
+      status: row.status || 'Aktiv',
+      weeklyHours: Number(row.weekly_hours ?? 40)
+    })))
+    setDataLoading(false)
+  }
+
+  async function login(e){
+    e.preventDefault()
+    if (!supabase) return setMessage('Supabase ist noch nicht konfiguriert.')
+    const f = new FormData(e.currentTarget)
+    setMessage('Anmeldung läuft …')
+    const { error } = await supabase.auth.signInWithPassword({
+      email: String(f.get('email') || '').trim(),
+      password: String(f.get('password') || '')
+    })
+    setMessage(error ? `Anmeldung fehlgeschlagen: ${error.message}` : '')
+  }
+
+  async function logout(){
+    if (supabase) await supabase.auth.signOut()
+    setSession(null)
+  }
 
   const customerName = id => customers.find(x => x.id === id)?.name || '—'
   const employeeName = id => employees.find(x => x.id === id)?.name || '—'
@@ -40,9 +95,43 @@ export default function Home() {
     e.preventDefault(); const f = new FormData(e.currentTarget)
     setCustomers(v => [...v,{id:Date.now(),name:f.get('name'),contact:f.get('contact'),city:f.get('city')}]); e.currentTarget.reset()
   }
-  function addEmployee(e){
+  async function addEmployee(e){
     e.preventDefault(); const f = new FormData(e.currentTarget)
-    setEmployees(v => [...v,{id:Date.now(),name:f.get('name'),role:f.get('role'),status:'Aktiv',weeklyHours:+f.get('weeklyHours')||40}]); e.currentTarget.reset()
+    if (!supabase || !session) return
+    setMessage('Mitarbeiter wird gespeichert …')
+    const { error } = await supabase.from('employees').insert({
+      name: String(f.get('name') || '').trim(),
+      role: String(f.get('role') || '').trim(),
+      status: 'Aktiv',
+      weekly_hours: Number(f.get('weeklyHours')) || 40
+    })
+    if (error) return setMessage(`Speichern fehlgeschlagen: ${error.message}`)
+    e.currentTarget.reset()
+    setMessage('Mitarbeiter gespeichert.')
+    await loadEmployees()
+  }
+  async function saveEmployee(e, id){
+    e.preventDefault(); const f = new FormData(e.currentTarget)
+    if (!supabase || !session) return
+    setMessage('Änderungen werden gespeichert …')
+    const { error } = await supabase.from('employees').update({
+      name: String(f.get('name') || '').trim(),
+      role: String(f.get('role') || '').trim(),
+      status: String(f.get('status') || 'Aktiv'),
+      weekly_hours: Number(f.get('weeklyHours')) || 40
+    }).eq('id', id)
+    if (error) return setMessage(`Änderung fehlgeschlagen: ${error.message}`)
+    setEditingEmployeeId(null)
+    setMessage('Mitarbeiter aktualisiert.')
+    await loadEmployees()
+  }
+  async function deactivateEmployee(id){
+    if (!supabase || !session) return
+    const { error } = await supabase.from('employees').update({ status:'Inaktiv' }).eq('id', id)
+    if (error) return setMessage(`Deaktivieren fehlgeschlagen: ${error.message}`)
+    setEditingEmployeeId(null)
+    setMessage('Mitarbeiter deaktiviert.')
+    await loadEmployees()
   }
   function addPlanning(e){
     e.preventDefault(); const f = new FormData(e.currentTarget)
@@ -90,10 +179,28 @@ export default function Home() {
   const nextJobs = useMemo(() => [...planning].sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).slice(0,5),[planning])
   const totalHours = useMemo(() => timeEntries.reduce((sum,x)=>sum+durationHours(x),0),[timeEntries])
 
+  if (authLoading) return <main className="loginShell"><div className="card loginCard"><h1>Prüfwerk</h1><p>Verbindung wird aufgebaut …</p></div></main>
+
+  if (!supabase) return <main className="loginShell"><div className="card loginCard"><h1>Supabase-Konfiguration fehlt</h1><p>Prüfe in Vercel die Variablen <code>NEXT_PUBLIC_SUPABASE_URL</code> und <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> und starte danach ein neues Deployment.</p></div></main>
+
+  if (!session) return <main className="loginShell">
+    <div className="card loginCard">
+      <div className="brand loginBrand"><span>Prüf<span className="orange">werk</span></span><b>✓</b></div>
+      <h1>Anmelden</h1>
+      <p>Melde dich mit dem Benutzer an, den du in Supabase unter Authentication angelegt hast.</p>
+      <form onSubmit={login}>
+        <input name="email" type="email" placeholder="E-Mail" autoComplete="email" required/>
+        <input name="password" type="password" placeholder="Passwort" autoComplete="current-password" required/>
+        <button className="primary">Anmelden</button>
+      </form>
+      {message && <p className="statusMessage">{message}</p>}
+    </div>
+  </main>
+
   return <>
     <header>
       <div className="brand"><span>Prüf<span className="orange">werk</span></span><b>✓</b></div>
-      <nav>{tabs.map(t=><button className={tab===t?'active':''} onClick={()=>setTab(t)} key={t}>{labels[t]}</button>)}</nav>
+      <div className="headerRight"><nav>{tabs.map(t=><button className={tab===t?'active':''} onClick={()=>setTab(t)} key={t}>{labels[t]}</button>)}</nav><div className="userBox"><span>{session.user.email}</span><button className="secondary" onClick={logout}>Abmelden</button></div></div>
     </header>
     <main>
       {tab==='dashboard' && <section>
@@ -111,9 +218,10 @@ export default function Home() {
 
       {tab==='assets' && <section><h1>Prüfobjekte</h1><Card title="Geräte & Fahrzeuge">{assets.map(a=><div className="row" key={a.id}><b>{a.name} · {a.internal}</b><span>{customerName(a.customerId)} · {a.location}</span></div>)}</Card></section>}
 
-      {tab==='employees' && <section><h1>Mitarbeiter</h1><div className="two"><Card title="Mitarbeiter anlegen"><form onSubmit={addEmployee}><input name="name" placeholder="Name" required/><input name="role" placeholder="Funktion"/><input name="weeklyHours" type="number" min="1" max="60" defaultValue="40" placeholder="Sollstunden / Woche"/><button className="primary">Speichern</button></form></Card><Card title="Team">{employees.map(e=><div className="row" key={e.id}><b>{e.name}</b><span>{e.role} · {e.status} · {e.weeklyHours} Std./Woche</span></div>)}</Card></div></section>}
+      {message && <div className="appMessage">{message}</div>}
+      {tab==='employees' && <section><h1>Mitarbeiter</h1>{dataLoading && <p>Daten werden geladen …</p>}<div className="two"><Card title="Mitarbeiter anlegen"><form onSubmit={addEmployee}><input name="name" placeholder="Name" required/><input name="role" placeholder="Funktion"/><input name="weeklyHours" type="number" min="1" max="60" defaultValue="40" placeholder="Sollstunden / Woche"/><button className="primary">Speichern</button></form></Card><Card title="Team">{employees.map(e=> editingEmployeeId===e.id ? <form className="employeeEdit" key={e.id} onSubmit={event=>saveEmployee(event,e.id)}><input name="name" defaultValue={e.name} placeholder="Name" required/><input name="role" defaultValue={e.role} placeholder="Funktion"/><input name="weeklyHours" type="number" min="1" max="60" defaultValue={e.weeklyHours} placeholder="Sollstunden / Woche"/><select name="status" defaultValue={e.status}><option>Aktiv</option><option>Urlaub</option><option>Krank</option><option>Inaktiv</option></select><div className="buttonRow"><button className="primary">Änderungen speichern</button><button type="button" className="secondary" onClick={()=>setEditingEmployeeId(null)}>Abbrechen</button>{e.status!=='Inaktiv'&&<button type="button" className="danger" onClick={()=>deactivateEmployee(e.id)}>Deaktivieren</button>}</div></form> : <div className="row employeeRow" key={e.id}><div><b>{e.name}</b><span>{e.role} · {e.status} · {e.weeklyHours} Std./Woche</span></div><button className="secondary" onClick={()=>setEditingEmployeeId(e.id)}>Bearbeiten</button></div>)}</Card></div></section>}
 
-      {tab==='planning' && <section><h1>Einsatzplanung</h1><div className="two"><Card title="Termin planen"><form onSubmit={addPlanning}><select name="employeeId" required><option value="">Mitarbeiter</option>{employees.map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select><select name="customerId" required><option value="">Kunde</option>{customers.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select><select name="assetId" required><option value="">Prüfobjekt</option>{assets.map(a=><option value={a.id} key={a.id}>{a.name} · {a.internal}</option>)}</select><input name="date" type="date" required/><input name="time" type="time" required/><button className="primary">Termin speichern</button></form></Card><Card title="Geplante Einsätze">{planning.map(j=><div className="row" key={j.id}><b>{j.date} · {j.time} · {customerName(j.customerId)}</b><span>{employeeName(j.employeeId)} · {assetName(j.assetId)} · {j.status}</span></div>)}</Card></div></section>}
+      {tab==='planning' && <section><h1>Einsatzplanung</h1><div className="two"><Card title="Termin planen"><form onSubmit={addPlanning}><select name="employeeId" required><option value="">Mitarbeiter</option>{employees.filter(e=>e.status!=='Inaktiv').map(e=><option value={e.id} key={e.id}>{e.name}</option>)}</select><select name="customerId" required><option value="">Kunde</option>{customers.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select><select name="assetId" required><option value="">Prüfobjekt</option>{assets.map(a=><option value={a.id} key={a.id}>{a.name} · {a.internal}</option>)}</select><input name="date" type="date" required/><input name="time" type="time" required/><button className="primary">Termin speichern</button></form></Card><Card title="Geplante Einsätze">{planning.map(j=><div className="row" key={j.id}><b>{j.date} · {j.time} · {customerName(j.customerId)}</b><span>{employeeName(j.employeeId)} · {assetName(j.assetId)} · {j.status}</span></div>)}</Card></div></section>}
 
       {tab==='time' && <TimeTracking
         employees={employees} customers={customers} entries={timeEntries} employeeName={employeeName} customerName={customerName}
@@ -140,7 +248,7 @@ function TimeTracking({employees,customers,entries,employeeName,customerName,tim
     <div className="two">
       <Card title="Stempeluhr">
         <label className="fieldLabel">Mitarbeiter</label>
-        <select value={timeEmployee} onChange={e=>setTimeEmployee(e.target.value)} disabled={!!timer}>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>
+        <select value={timeEmployee} onChange={e=>setTimeEmployee(e.target.value)} disabled={!!timer}>{employees.filter(e=>e.status!=='Inaktiv').map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>
         <div className="clockBox">
           <strong>{timer ? (timer.pausedAt ? 'Pause läuft' : 'Arbeitszeit läuft') : 'Nicht eingestempelt'}</strong>
           <span>{timer ? `Beginn ${localTime(timer.startedAt)} · ${employeeName(timer.employeeId)}` : 'Arbeitszeit mit einem Klick starten.'}</span>
@@ -153,7 +261,7 @@ function TimeTracking({employees,customers,entries,employeeName,customerName,tim
       </Card>
       <Card title="Zeit manuell erfassen">
         <form onSubmit={addManualTime}>
-          <select name="employeeId" required><option value="">Mitarbeiter</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>
+          <select name="employeeId" required><option value="">Mitarbeiter</option>{employees.filter(e=>e.status!=='Inaktiv').map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select>
           <input name="date" type="date" required/>
           <div className="split"><input name="start" type="time" required/><input name="end" type="time" required/></div>
           <input name="breakMinutes" type="number" min="0" defaultValue="30" placeholder="Pause in Minuten"/>

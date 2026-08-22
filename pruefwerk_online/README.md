@@ -1,39 +1,42 @@
 # Prüfwerk Online
 
-Grundgerüst für eine mehrbenutzerfähige UVV-Prüfapp mit Einsatzplanung und Arbeitszeiterfassung.
+Mehrbenutzerfähige UVV-Prüfapp mit Supabase-Login und dauerhafter Mitarbeiterverwaltung.
 
-## Enthalten
+## Jetzt angeschlossen
 - Prüfwerk Branding in Orange mit einem Haken
-- Dashboard
-- Kunden
-- Prüfobjekte
-- Mitarbeiter inkl. Wochen-Sollstunden
-- Einsatzplanung
-- Arbeitszeiterfassung mit Start, Pause und Feierabend
-- Manuelle Zeitbuchungen
-- Zuordnung von Zeit zu Kunde und Zeitart (Arbeits-, Fahr-, Prüf- oder Bürozeit)
-- Einfache Admin-Auswertung der erfassten Stunden
-- Prüfungsbereich
-- Protokollübersicht
+- Supabase E-Mail/Passwort-Login
+- Mitarbeiter werden aus `public.employees` geladen
+- Mitarbeiter anlegen, bearbeiten und deaktivieren wird dauerhaft in Supabase gespeichert
+- RLS ist für die Tabelle `employees` vorgesehen
+- Dashboard, Kunden, Prüfobjekte, Planung, Arbeitszeit, Prüfung und Protokolle als weitere App-Bereiche
 
-## Wichtig
-Die aktuelle Version ist ein Frontend-Prototyp. Daten leben nur während der laufenden Browsersitzung und sind noch nicht zentral gespeichert. Für den echten Mehrbenutzerbetrieb müssen Login und Datenbank angeschlossen werden.
+## Vercel Environment Variables
+Diese beiden Variablen müssen in Vercel gesetzt sein:
 
-## Für den echten Online-Betrieb noch zu verbinden
-1. Supabase-Projekt für Login und zentrale Datenbank anlegen.
-2. `.env.example` nach `.env.local` kopieren und Supabase-Zugangsdaten eintragen.
-3. Datenmodelle für `customers`, `employees`, `assets`, `planning`, `inspections`, `protocols` und `time_entries` anlegen.
-4. Rollen und Rechte ergänzen: Admin / Prüfer. Mitarbeiter dürfen eigene Zeiten buchen; Admins dürfen alle Zeiten auswerten und korrigieren.
-5. Änderungen an Zeitbuchungen in einem Audit-Log protokollieren.
-6. Hosting z. B. über Vercel und Domain `app.pruefwerk.de` verbinden.
-7. Danach Mängelfotos, digitale Unterschrift, automatische PDF-Protokolle sowie PDF-/Excel-Arbeitszeitnachweise ergänzen.
+```text
+NEXT_PUBLIC_SUPABASE_URL=https://DEIN-PROJEKT.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
 
-## Empfohlenes Datenmodell für Arbeitszeit
-`time_entries`: id, employee_id, work_date, start_time, end_time, break_minutes, time_type, customer_id, planning_id, note, created_at, updated_at, created_by, updated_by.
+Nach Änderungen an Environment Variables immer neu deployen.
+
+## Supabase Tabelle `employees`
+Erwartete Spalten:
+- `id` int8, Primary Key
+- `created_at` timestamptz, Default `now()`
+- `name` text
+- `role` text
+- `weekly_hours` int8
+- `status` text
+
+## RLS Policy
+RLS bleibt aktiviert. Für den aktuellen Stand kann eine Policy für `authenticated` mit `ALL`, `USING (true)` und `WITH CHECK (true)` verwendet werden. Dadurch dürfen nur angemeldete Supabase-Benutzer die Mitarbeiterdaten über die App verwalten.
+
+## Noch nicht dauerhaft gespeichert
+Kunden, Prüfobjekte, Planung, Arbeitszeiten und Prüfprotokolle sind in dieser Ausbaustufe noch nicht mit Supabase verbunden. Diese Tabellen werden als Nächstes zentral angebunden.
 
 ## Lokal starten
 ```bash
 npm install
 npm run dev
 ```
-Dann `http://localhost:3000` öffnen.
